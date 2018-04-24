@@ -1,14 +1,17 @@
+#!/usr/bin/env python
+# -*- coding: utf8 -*-
+
 """
-A ideia é propor uma solução que gere dados, processe eles (com uma certa taxa 
+A ideia é propor uma solução que gere dados, processe eles (com uma certa taxa
 de erros), e escreva num arquivo de saída, utilizando uma fila com prioridades.
 Requisito 1:
-- Permitir utilizar uma sequencia de `page_processor`s, não apenas 1 
+- Permitir utilizar uma sequencia de `page_processor`s, não apenas 1
 (podem ser outras funções, com a mesma assinatura)
 - O `next_step é pensado para poder acoplar novos passos
 - Permitir execução paralela dessa sequencia de processors
 - Bonus: utilizar async/await ou gevent para isso
 Requisito 2:
-- Não manter mais de N itens por vez em memória na fila, para controlar uso de 
+- Não manter mais de N itens por vez em memória na fila, para controlar uso de
 recursos da maquina.
 
 """
@@ -64,6 +67,8 @@ def page_processor(name, pages, next_step, queue, *a, **kw):
     """
     for page in pages:
         while queue.full():
+            # NOTE: worker locks before processing data
+            # QUESTION: why?
             print('Queue is busy! %s is on hold...' % name)
             gevent.sleep(random.randint(0, 8))
         if DEBUG:
@@ -77,6 +82,9 @@ def page_processor(name, pages, next_step, queue, *a, **kw):
         elif next_step:
             if DEBUG:
                 print('PROCESSOR: done [%s]' % page)
+            # NOTE: calculating dynamic priority on insert
+            # QUESTION: explanation?
+            # HINT: can a static (lower) priority value be used instead?
             priority = HIGH_PRIORITY + (queue.qsize() + 1) 
             queue.put((priority,page),timeout=30)
             gevent.sleep(0) # Set >0 to simulate processor delay 
@@ -170,6 +178,11 @@ def main(n_processor = 3, n_picker = 3, queue_size = 10, *a, **kw):
     global queue
     queue = PriorityQueue(maxsize = queue_size)
     spawn_list = []
+    # NOTE: processors/pickers workers are running parallel
+    # QUESTION: how to handle a concurrent serial line of processors? (eg.
+    #   where one processor depends on the output of the previous processor)
+    # HINT: generator (producer) should not be shared to workers, all access
+    #   should go though the queue(s).
     for i in range(n_processor):
         greenlet = gevent.spawn(page_processor, 'Processor {0}'.format(i+1), pages, next_step, queue)
         spawn_list.append(greenlet)
@@ -184,6 +197,9 @@ if __name__ == '__main__':
     import time 
     srt_time = time.time()
     main()
+    # NOTE: main function locks and waits pickers queue to timeout
+    # QUESTION: how to make system detect producer has finished,
+    #   and all output has been processed?
     try:
         test()
         print("Code ran sucessfully after %.3f seconds!" % (time.time() - srt_time))
